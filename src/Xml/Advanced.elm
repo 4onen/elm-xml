@@ -7,8 +7,6 @@ import Set exposing (Set)
 type XmlTag
     = SubTags SubTagDict
     | PresenceTag
-    | XmlInt Int
-    | XmlFloat Float
     | XmlString String
 
 type alias SubTagDict = Dict String (List XmlTag)
@@ -78,19 +76,7 @@ parseXmlHelp tag =
 simpleContent : Parser XmlTag
 simpleContent =
     Parser.getChompedString (Parser.chompUntil "</")
-        |> Parser.map
-            (\s ->
-                ( case String.toInt s of
-                    Just i ->
-                        XmlInt i
-                    Nothing ->
-                        case String.toFloat s of
-                            Just f ->
-                                XmlFloat f
-                            Nothing ->
-                                XmlString s
-                )
-            )
+        |> Parser.map XmlString
 
 subTagContent : String -> Parser XmlTag
 subTagContent tag =
