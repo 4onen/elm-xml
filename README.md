@@ -1,3 +1,7 @@
+# _Public data interface incomplete_
+
+This is a version less than 0.0! Basically, I wouldn't recommend using this yet under any circumstances!
+
 ## Structured XML decoding for Elm
 
 Since the move to **Elm 0.19**, a number of dependencies I had for my development work on a neat toy project broke. Most of these dependencies were somewhat not-Elm-ish, and I shouldn't have been using them anyway. However, one of these dependencies was [ymtszw/elm-xml-decode](https://github.com/ymtszw/elm-xml-decode/tree/1.0.1). For a number of reasons, I want to decode a bunch of structured XML using Elm, because conversion to another data format is hard. I made this library to help with that.
