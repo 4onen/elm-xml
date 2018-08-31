@@ -39,19 +39,23 @@ xml =
                     |. symbol "/>"
                 , succeed identity
                     |. symbol ">"
-                    |. mySpaces
                     |= parseXmlHelp tag
                 ]
             )
 
+{--| Detect a valid xml tag opener followed by a valid xml tag name, then discard the xml attribute list.
+
+Does not consume the tag close, as that may help define whether the tag has any content.
+
+See XML Naming Rules on https://www.w3schools.com/xml/xml_elements.asp to help understand valid tag names.--}
 xmlTag : Parser String
 xmlTag = 
     succeed identity
         |. symbol "<"
         |= Parser.variable
-            { start = Char.isAlpha
-            , inner = Char.isAlphaNum
-            , reserved = Set.empty
+            { start = (\c -> Char.isAlpha c || c == '_')
+            , inner = (\c -> Char.isAlphaNum c || Set.member c (Set.fromList ['-','_','.']))
+            , reserved = Set.singleton "xml"
             }
         |. discardAttributeList
 
@@ -59,8 +63,10 @@ parseXmlHelp : String -> Parser (String, XmlTag)
 parseXmlHelp tag =
     Parser.oneOf
         [ succeed (tag,PresenceTag)
+            |. Parser.backtrackable mySpaces
             |. symbol ("</"++tag++">")
         , succeed (\x -> (tag,x))
+            |. Parser.backtrackable mySpaces
             |= subTagContent tag
         , succeed (\x -> (tag,x))
             |= simpleContent
@@ -72,19 +78,19 @@ parseXmlHelp tag =
 simpleContent : Parser XmlTag
 simpleContent =
     Parser.getChompedString (Parser.chompUntil "</")
-    |> andThen 
-        (\s -> succeed
-            ( case String.toInt s of
-                Just i ->
-                    XmlInt i
-                Nothing ->
-                    case String.toFloat s of
-                        Just f ->
-                            XmlFloat f
-                        Nothing ->
-                            XmlString s
+        |> Parser.map
+            (\s ->
+                ( case String.toInt s of
+                    Just i ->
+                        XmlInt i
+                    Nothing ->
+                        case String.toFloat s of
+                            Just f ->
+                                XmlFloat f
+                            Nothing ->
+                                XmlString s
+                )
             )
-        )
 
 subTagContent : String -> Parser XmlTag
 subTagContent tag =
@@ -127,9 +133,14 @@ discardAttributeList =
                         , inner = \c -> Char.isAlphaNum c || c == ':'
                         , reserved = Set.empty
                         }
-                    |. symbol "=\""
-                    |. Parser.chompUntil "\""
-                    |. symbol "\""
+                    |. Parser.oneOf
+                        [ symbol "=\""
+                            |. Parser.chompUntil "\""
+                            |. symbol "\""
+                        , symbol "='"
+                            |. Parser.chompUntil "'"
+                            |. symbol "'"
+                        ]
                 , succeed (Parser.Done ())
                 ]
         )
@@ -139,6 +150,5 @@ mySpaces : Parser ()
 mySpaces =
     Parser.chompWhile
         (\c ->
-            Set.fromList [' ','\n','\r','\t']
-                |> Set.member c
+            Set.member c <| Set.fromList [' ','\n','\r','\t']
         )
