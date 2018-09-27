@@ -1,24 +1,26 @@
-module Xml.Advanced exposing (XmlTag(..),SubTagDict,xmlFile,xml,possibleComments)
+module Xml.Decode.Advanced exposing (..)
 
 import Parser exposing (Parser,(|.),(|=),spaces,succeed,symbol,keyword, andThen)
 import Dict exposing (Dict)
 import Set exposing (Set)
 
-type XmlTag
+type alias XmlValue = (String,XmlContentValue)
+
+type XmlContentValue
     = SubTags SubTagDict
     | PresenceTag
     | XmlString String
 
-type alias SubTagDict = Dict String (List XmlTag)
+type alias SubTagDict = Dict String (List XmlContentValue)
 
-xmlFile : Parser XmlTag
+xmlFile : Parser XmlValue
 xmlFile =
     succeed identity
         |. Parser.symbol "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         |. mySpaces
         |. possibleComments
         |. mySpaces
-        |= (xml |> Parser.map Tuple.second)
+        |= (xml)
         |. mySpaces
         |. Parser.end
 
@@ -28,7 +30,7 @@ possibleComments =
         |. Parser.chompUntil "-->"
         |. Parser.symbol "-->"
 
-xml : Parser (String, XmlTag)
+xml : Parser XmlValue
 xml =
     xmlTag 
         |> andThen 
@@ -57,7 +59,7 @@ xmlTag =
             }
         |. discardAttributeList
 
-parseXmlHelp : String -> Parser (String, XmlTag)
+parseXmlHelp : String -> Parser XmlValue
 parseXmlHelp tag =
     Parser.oneOf
         [ succeed (tag,PresenceTag)
@@ -73,17 +75,17 @@ parseXmlHelp tag =
             "This super simple XML library doesn't support semi-structured XML. Please decide between either child tags or text inside any particular tag, not both!"
         ]
 
-simpleContent : Parser XmlTag
+simpleContent : Parser XmlContentValue
 simpleContent =
     Parser.getChompedString (Parser.chompUntil "</")
         |> Parser.map XmlString
 
-subTagContent : String -> Parser XmlTag
+subTagContent : String -> Parser XmlContentValue
 subTagContent tag =
     Parser.loop Dict.empty 
         (subTagContentHelp tag)
 
-subTagContentHelp : String -> SubTagDict -> Parser (Parser.Step SubTagDict XmlTag)
+subTagContentHelp : String -> SubTagDict -> Parser (Parser.Step SubTagDict XmlContentValue)
 subTagContentHelp tag dict = 
     Parser.oneOf
         [ succeed (Parser.Loop dict)
@@ -95,7 +97,7 @@ subTagContentHelp tag dict =
         ]
         |. mySpaces
 
-insertSubTag : String -> XmlTag -> SubTagDict -> SubTagDict
+insertSubTag : String -> XmlContentValue -> SubTagDict -> SubTagDict
 insertSubTag tag xmltag =
     Dict.update tag 
         (\m ->

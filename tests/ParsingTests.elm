@@ -7,7 +7,7 @@ import Test exposing (Test,describe,test,fuzz)
 import Expect
 import Fuzz exposing (Fuzzer)
 
-import Xml.Advanced exposing (..)
+import Xml.Decode.Advanced exposing (..)
 
 suite : Test
 suite =
