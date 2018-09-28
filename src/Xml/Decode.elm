@@ -16,6 +16,7 @@ type XmlParseError
     | BadRoot String String
     | InContext String XmlParseError
     | OneOfFail (List XmlParseError)
+    | CustomFail String
 
 type alias XmlDecoder a 
     = (XmlValue -> Result XmlParseError a)
@@ -311,6 +312,12 @@ andThen makeDecB decA xmlContentValue =
         Result.Err e ->
             Result.Err e
 
+succeed : a -> XmlContentDecoder a
+succeed a _ = Result.Ok a
+
+fail : String -> XmlContentDecoder a
+fail msg _ = Result.Err <| CustomFail msg
+
 
 
 
@@ -358,6 +365,8 @@ errorToString err =
                     es  |> List.map (\e -> "["++(errorToString e)++"]")
                         |> String.concat
                         |> (++) "You tried a few different decoders, but they all failed. See the [bracketed] errors below:\n"
+        CustomFail s ->
+            "Your decoder threw the custom error below:\n"++s
 
 
 
