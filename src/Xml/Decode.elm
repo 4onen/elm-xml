@@ -1,9 +1,11 @@
-module Xml exposing (XmlDecoder,XmlContentDecoder,XmlParseError(..)
-                    ,xmlFileString,xmlString,map,map2,map3,map4,map5
-                    ,map6,rootTag,maybeTag,tag,nonEmptyList,list
-                    ,tagPresence,presenceTag,string,int,float
-                    ,value,oneOf,andThen,errorToString
-                    )
+module Xml.Decode exposing 
+        (XmlDecoder,XmlContentDecoder,XmlParseError(..)
+        ,xmlFileString,xmlString,map,map2,map3,map4,map5
+        ,map6,rootTag,maybeTag,tag,nonEmptyList,list
+        ,tagPresence,presenceTag,string,int,float
+        ,value,oneOf,andThen,errorToString
+        ,succeed,fail
+        )
 
 import Parser exposing ((|=),(|.),Problem(..))
 import Dict
@@ -54,11 +56,11 @@ xmlString dec str =
                 |> SyntaxError
                 |> Result.Err
 
-map : (a -> val) -> XmlDecoder a -> XmlDecoder val
+map : (a -> val) -> XmlContentDecoder a -> XmlContentDecoder val
 map f dec xmlValue =
     Result.map f (dec xmlValue)
 
-map2 : (a -> b -> val) -> XmlDecoder a -> XmlDecoder b -> XmlDecoder val
+map2 : (a -> b -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder val
 map2 f decA decB xmlValue =
     case (decA xmlValue, decB xmlValue) of
         (Result.Ok a, Result.Ok b) ->
@@ -68,7 +70,7 @@ map2 f decA decB xmlValue =
         (_, Result.Err s) ->
             Result.Err s
 
-map3 : (a -> b -> c -> val) -> XmlDecoder a -> XmlDecoder b -> XmlDecoder c -> XmlDecoder val
+map3 : (a -> b -> c -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder val
 map3 f decA decB decC xmlValue =
     case (map2 Tuple.pair decA decB xmlValue, decC xmlValue) of
         (Result.Ok (a,b), Result.Ok c) ->
@@ -78,7 +80,7 @@ map3 f decA decB decC xmlValue =
         (_, Result.Err s) ->
             Result.Err s
 
-map4 : (a -> b -> c -> d -> val) -> XmlDecoder a -> XmlDecoder b -> XmlDecoder c -> XmlDecoder d -> XmlDecoder val
+map4 : (a -> b -> c -> d -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder d -> XmlContentDecoder val
 map4 f decA decB decC decD xmlValue =
     case (map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue) of
         (Result.Ok (a,b), Result.Ok (c,d)) ->
@@ -88,7 +90,7 @@ map4 f decA decB decC decD xmlValue =
         (_, Result.Err s) ->
             Result.Err s
 
-map5 : (a -> b -> c -> d -> e -> val) -> XmlDecoder a -> XmlDecoder b -> XmlDecoder c -> XmlDecoder d -> XmlDecoder e -> XmlDecoder val
+map5 : (a -> b -> c -> d -> e -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder d -> XmlContentDecoder e -> XmlContentDecoder val
 map5 f decA decB decC decD decE xmlValue =
     case (map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue, decE xmlValue) of
         (Result.Ok (a,b), Result.Ok (c,d), Result.Ok e) ->
@@ -101,18 +103,18 @@ map5 f decA decB decC decD decE xmlValue =
             Result.Err s
 
 map6 : 
-    (a -> b -> c -> d -> e -> g -> val) 
-    -> XmlDecoder a 
-    -> XmlDecoder b 
-    -> XmlDecoder c 
-    -> XmlDecoder d 
-    -> XmlDecoder e 
-    -> XmlDecoder g 
-    -> XmlDecoder val
-map6 f decA decB decC decD decE decG xmlValue =
-    case (map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue, map2 Tuple.pair decE decG xmlValue) of
-        (Result.Ok (a,b), Result.Ok (c,d), Result.Ok (e,g)) ->
-            Result.Ok (f a b c d e g)
+    (a -> b -> c -> d -> e -> f -> val) 
+    -> XmlContentDecoder a 
+    -> XmlContentDecoder b 
+    -> XmlContentDecoder c 
+    -> XmlContentDecoder d 
+    -> XmlContentDecoder e 
+    -> XmlContentDecoder f 
+    -> XmlContentDecoder val
+map6 func decA decB decC decD decE decF xmlValue =
+    case (map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue, map2 Tuple.pair decE decF xmlValue) of
+        (Result.Ok (a,b), Result.Ok (c,d), Result.Ok (e,f)) ->
+            Result.Ok (func a b c d e f)
         (Result.Err s, _, _) ->
             Result.Err s
         (_, Result.Err s, _) ->
