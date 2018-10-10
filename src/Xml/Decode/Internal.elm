@@ -3,6 +3,7 @@ module Xml.Decode.Internal exposing
     , Children
     , Content(..)
     , Context(..)
+    , DeadEnd
     , Element
     , Problem(..)
     , Tag
@@ -11,7 +12,7 @@ module Xml.Decode.Internal exposing
     )
 
 import Dict exposing (Dict)
-import Parser.Advanced as Parser exposing (..)
+import Parser.Advanced exposing (..)
 import Set exposing (Set)
 
 
@@ -64,18 +65,21 @@ type Problem
     | ExpectingClosingTag String
     | ExpectingClosingTagEnd String
     | ExpectingValidAttrName
-    | ExpectingAttrEq
-    | ExpectingAttrValue
+    | ExpectingAttrEq String
 
 
 type alias XmlParser a =
     Parser Context Problem a
 
 
+type alias DeadEnd =
+    Parser.Advanced.DeadEnd Context Problem
+
+
 xml : XmlParser Tag
 xml =
     inContext BeforeRoot <|
-        Parser.succeed identity
+        succeed identity
             |. ignoreCommentsAndDirectives
             |= tag
             |. ignoreCommentsAndDirectives
@@ -243,7 +247,7 @@ attribute =
                 inContext (Attribute attrName) <|
                     succeed (Tuple.pair attrName)
                         |. spaces
-                        |. symbol (Token "=" ExpectingAttrEq)
+                        |. symbol (Token "=" (ExpectingAttrEq attrName))
                         |. spaces
                         |= oneOf
                             [ quotedString '"' --" --Ignore this comment; VSCode code rendering bug fix.
@@ -279,15 +283,15 @@ ignoreCommentsAndDirectives =
         directiveEnd =
             Token "?>" <| ExpectingDirectiveEnd
     in
-    Parser.succeed ()
-        |. spaces
-        |. loop ()
-            (\() ->
-                oneOf
+    loop ()
+        (\() ->
+            succeed identity
+                |. spaces
+                |= oneOf
                     [ map (\_ -> Loop ()) <|
                         multiComment commentStart commentStart NotNestable
                     , map (\_ -> Loop ()) <|
                         multiComment directiveStart directiveEnd NotNestable
                     , succeed (Done ())
                     ]
-            )
+        )

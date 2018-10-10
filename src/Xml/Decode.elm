@@ -1,7 +1,7 @@
 module Xml.Decode exposing
-    ( XmlContentDecoder
-    , XmlDecoder
-    , XmlParseError(..)
+    ( ContentDecoder
+    , Decoder
+    , ParseError(..)
     , andThen
     , errorToString
     , fail
@@ -24,73 +24,51 @@ module Xml.Decode exposing
     , tag
     , tagPresence
     , value
-    , xmlFileString
     , xmlString
     )
 
 import Dict
-import Parser exposing ((|.), (|=), Problem(..))
-import Xml.Decode.Internal exposing (XmlContentValue(..), XmlValue)
+import Parser.Advanced as Parser
+import Xml.Decode.ErrorParsing as EEP
+import Xml.Decode.Internal as Internal
 
 
-type XmlParseError
-    = SyntaxError String
-    | BadValue String
+type ParseError
+    = BadValue String
     | MissingValue String
     | BadRoot String String
-    | InContext String XmlParseError
-    | OneOfFail (List XmlParseError)
+    | InContext String ParseError
+    | OneOfFail (List ParseError)
     | CustomFail String
+    | InternalFail (List Internal.DeadEnd)
 
 
-type alias XmlDecoder a =
-    XmlValue -> Result XmlParseError a
+type alias Decoder a =
+    Internal.Tag -> Result ParseError a
 
 
-type alias XmlContentDecoder a =
-    XmlContentValue -> Result XmlParseError a
+type alias ContentDecoder a =
+    Internal.Content -> Result ParseError a
 
 
-xmlFileString : XmlDecoder val -> String -> Result XmlParseError val
-xmlFileString dec str =
-    case Parser.run Xml.Decode.Internal.xmlFile str of
-        Result.Ok xmlValue ->
-            xmlValue
-                |> dec
-                |> Result.mapError (InContext "From the root of your file...\n")
-
-        Result.Err deadEnds ->
-            deadEnds
-                |> List.map decodeParserDeadEnd
-                |> List.foldl (++) ""
-                |> (++) "I ran into an error while parsing this xml file!\n\n"
-                |> SyntaxError
-                |> Result.Err
-
-
-xmlString : XmlDecoder val -> String -> Result XmlParseError val
+xmlString : Decoder val -> String -> Result ParseError val
 xmlString dec str =
-    case Parser.run (Parser.succeed identity |. Parser.spaces |= Xml.Decode.Internal.xml) str of
+    case Parser.run Internal.xml str of
         Result.Ok xmlValue ->
             xmlValue
                 |> dec
                 |> Result.mapError (InContext "From the root of your string...\n")
 
         Result.Err deadEnds ->
-            deadEnds
-                |> List.map decodeParserDeadEnd
-                |> List.foldl (++) ""
-                |> (++) "I ran into an error while parsing this xml string!\n\n"
-                |> SyntaxError
-                |> Result.Err
+            Result.Err <| InternalFail deadEnds
 
 
-map : (a -> val) -> XmlContentDecoder a -> XmlContentDecoder val
+map : (a -> val) -> ContentDecoder a -> ContentDecoder val
 map f dec xmlValue =
     Result.map f (dec xmlValue)
 
 
-map2 : (a -> b -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder val
+map2 : (a -> b -> val) -> ContentDecoder a -> ContentDecoder b -> ContentDecoder val
 map2 f decA decB xmlValue =
     case ( decA xmlValue, decB xmlValue ) of
         ( Result.Ok a, Result.Ok b ) ->
@@ -103,7 +81,7 @@ map2 f decA decB xmlValue =
             Result.Err s
 
 
-map3 : (a -> b -> c -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder val
+map3 : (a -> b -> c -> val) -> ContentDecoder a -> ContentDecoder b -> ContentDecoder c -> ContentDecoder val
 map3 f decA decB decC xmlValue =
     case ( map2 Tuple.pair decA decB xmlValue, decC xmlValue ) of
         ( Result.Ok ( a, b ), Result.Ok c ) ->
@@ -116,7 +94,7 @@ map3 f decA decB decC xmlValue =
             Result.Err s
 
 
-map4 : (a -> b -> c -> d -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder d -> XmlContentDecoder val
+map4 : (a -> b -> c -> d -> val) -> ContentDecoder a -> ContentDecoder b -> ContentDecoder c -> ContentDecoder d -> ContentDecoder val
 map4 f decA decB decC decD xmlValue =
     case ( map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue ) of
         ( Result.Ok ( a, b ), Result.Ok ( c, d ) ) ->
@@ -129,7 +107,7 @@ map4 f decA decB decC decD xmlValue =
             Result.Err s
 
 
-map5 : (a -> b -> c -> d -> e -> val) -> XmlContentDecoder a -> XmlContentDecoder b -> XmlContentDecoder c -> XmlContentDecoder d -> XmlContentDecoder e -> XmlContentDecoder val
+map5 : (a -> b -> c -> d -> e -> val) -> ContentDecoder a -> ContentDecoder b -> ContentDecoder c -> ContentDecoder d -> ContentDecoder e -> ContentDecoder val
 map5 f decA decB decC decD decE xmlValue =
     case ( map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue, decE xmlValue ) of
         ( Result.Ok ( a, b ), Result.Ok ( c, d ), Result.Ok e ) ->
@@ -147,13 +125,13 @@ map5 f decA decB decC decD decE xmlValue =
 
 map6 :
     (a -> b -> c -> d -> e -> f -> val)
-    -> XmlContentDecoder a
-    -> XmlContentDecoder b
-    -> XmlContentDecoder c
-    -> XmlContentDecoder d
-    -> XmlContentDecoder e
-    -> XmlContentDecoder f
-    -> XmlContentDecoder val
+    -> ContentDecoder a
+    -> ContentDecoder b
+    -> ContentDecoder c
+    -> ContentDecoder d
+    -> ContentDecoder e
+    -> ContentDecoder f
+    -> ContentDecoder val
 map6 func decA decB decC decD decE decF xmlValue =
     case ( map2 Tuple.pair decA decB xmlValue, map2 Tuple.pair decC decD xmlValue, map2 Tuple.pair decE decF xmlValue ) of
         ( Result.Ok ( a, b ), Result.Ok ( c, d ), Result.Ok ( e, f ) ) ->
@@ -169,7 +147,7 @@ map6 func decA decB decC decD decE decF xmlValue =
             Result.Err s
 
 
-rootTag : String -> XmlContentDecoder a -> XmlDecoder a
+rootTag : String -> ContentDecoder a -> Decoder a
 rootTag str dec ( rootTagStr, xmlContentValue ) =
     if not (str == rootTagStr) then
         Result.Err <| BadRoot str rootTagStr
@@ -179,10 +157,10 @@ rootTag str dec ( rootTagStr, xmlContentValue ) =
             |> Result.mapError (InContext <| "Inside the root tag <" ++ str ++ ">...\n")
 
 
-maybeTag : String -> XmlContentDecoder a -> XmlContentDecoder (Maybe a)
+maybeTag : String -> ContentDecoder a -> ContentDecoder (Maybe a)
 maybeTag str dec xmlContentValue =
     case xmlContentValue of
-        SubTags dict ->
+        Internal.Children dict ->
             case Dict.get str dict of
                 Just xcv ->
                     case xcv of
@@ -200,14 +178,14 @@ maybeTag str dec xmlContentValue =
                 Nothing ->
                     Result.Ok Maybe.Nothing
 
-        PresenceTag ->
+        Internal.NoContent ->
             Result.Ok Maybe.Nothing
 
-        XmlString s ->
+        Internal.Unstructured s ->
             Result.Err <| BadValue <| "You were expecting to find the tag <" ++ str ++ ">, but the tag you looked in was a string!\nRemember, this library doesn't support unstructured XML data!"
 
 
-tag : String -> XmlContentDecoder a -> XmlContentDecoder a
+tag : String -> ContentDecoder a -> ContentDecoder a
 tag str dec xmlContentValue =
     case maybeTag str dec xmlContentValue of
         Result.Ok (Just val) ->
@@ -223,7 +201,7 @@ tag str dec xmlContentValue =
             Result.Err e
 
 
-nonEmptyList : String -> XmlContentDecoder a -> XmlContentDecoder (List a)
+nonEmptyList : String -> ContentDecoder a -> ContentDecoder (List a)
 nonEmptyList str dec xmlContentValue =
     case list str dec xmlContentValue of
         Result.Ok (l :: ls) ->
@@ -239,10 +217,10 @@ nonEmptyList str dec xmlContentValue =
             Result.Err e
 
 
-list : String -> XmlContentDecoder a -> XmlContentDecoder (List a)
+list : String -> ContentDecoder a -> ContentDecoder (List a)
 list str dec xmlContentValue =
     case xmlContentValue of
-        SubTags dict ->
+        Internal.Children dict ->
             case Dict.get str dict of
                 Just l ->
                     let
@@ -277,28 +255,28 @@ list str dec xmlContentValue =
                 _ ->
                     Result.Ok []
 
-        PresenceTag ->
+        Internal.NoContent ->
             Result.Ok []
 
-        XmlString _ ->
+        Internal.Unstructured _ ->
             Result.Err <| BadValue <| "You were expecting to find a list of <" ++ str ++ ">s, but you looked in a string tag!"
 
 
-tagPresence : XmlContentDecoder Bool
+tagPresence : ContentDecoder Bool
 tagPresence xmlContentValue =
     Result.Ok True
 
 
-presenceTag : XmlContentDecoder Bool
+presenceTag : ContentDecoder Bool
 presenceTag xmlContentValue =
     case xmlContentValue of
-        PresenceTag ->
+        Internal.NoContent ->
             Result.Ok True
 
-        XmlString _ ->
+        Internal.Unstructured _ ->
             Result.Err <| BadValue <| "This presence tag had string content! Did you mean to test for \"tagPresence\"?"
 
-        SubTags d ->
+        Internal.Children d ->
             case Dict.isEmpty d of
                 True ->
                     Result.Ok True
@@ -307,12 +285,12 @@ presenceTag xmlContentValue =
                     Result.Err <| BadValue <| "This presence tag had children! Do you want to change your datamodel to support these?"
 
 
-string : XmlContentDecoder String
+string : ContentDecoder String
 string =
     expectingStringContent "a string"
 
 
-int : XmlContentDecoder Int
+int : ContentDecoder Int
 int xmlContentValue =
     expectingStringContent "an integer" xmlContentValue
         |> Result.andThen
@@ -329,7 +307,7 @@ int xmlContentValue =
             )
 
 
-float : XmlContentDecoder Float
+float : ContentDecoder Float
 float xmlContentValue =
     expectingStringContent "a floating-point number" xmlContentValue
         |> Result.andThen
@@ -346,25 +324,25 @@ float xmlContentValue =
             )
 
 
-expectingStringContent : String -> XmlContentDecoder String
+expectingStringContent : String -> ContentDecoder String
 expectingStringContent expect xmlContentValue =
     case xmlContentValue of
-        XmlString str ->
+        Internal.Unstructured str ->
             Result.Ok str
 
-        SubTags d ->
+        Internal.Children _ ->
             Result.Err <| BadValue <| "You were expecting " ++ expect ++ ", but found more XML children!"
 
-        PresenceTag ->
+        Internal.NoContent ->
             Result.Err <| MissingValue <| "You were expecting " ++ expect ++ ", but found an empty tag!"
 
 
-value : XmlContentDecoder XmlContentValue
+value : ContentDecoder Internal.Content
 value xmlContentValue =
     Result.Ok xmlContentValue
 
 
-oneOf : List (XmlContentDecoder a) -> XmlContentDecoder a
+oneOf : List (ContentDecoder a) -> ContentDecoder a
 oneOf decs xmlContentValue =
     case decs of
         [] ->
@@ -395,7 +373,7 @@ oneOf decs xmlContentValue =
                             Result.Err e2
 
 
-andThen : (a -> XmlContentDecoder b) -> XmlContentDecoder a -> XmlContentDecoder b
+andThen : (a -> ContentDecoder b) -> ContentDecoder a -> ContentDecoder b
 andThen makeDecB decA xmlContentValue =
     case decA xmlContentValue of
         Result.Ok a ->
@@ -405,22 +383,19 @@ andThen makeDecB decA xmlContentValue =
             Result.Err e
 
 
-succeed : a -> XmlContentDecoder a
+succeed : a -> ContentDecoder a
 succeed a _ =
     Result.Ok a
 
 
-fail : String -> XmlContentDecoder a
+fail : String -> ContentDecoder a
 fail msg _ =
     Result.Err <| CustomFail msg
 
 
-errorToString : XmlParseError -> String
+errorToString : ParseError -> String
 errorToString err =
     case err of
-        SyntaxError s ->
-            s
-
         BadValue s ->
             s
 
@@ -455,11 +430,15 @@ errorToString err =
         CustomFail s ->
             "Your decoder threw the custom error below:\n" ++ s
 
+        InternalFail listDeadEnds ->
+            listDeadEnds
+                |> List.map EEP.deadEndToString
+                |> List.foldl (++) ""
+                |> (++) "I ran into a syntax error while parsing this Xml!\n"
 
 
---TODO: Maybe switch to Parser.Advanced for custom errors?
 
-
+{--Old error-to-string implementation
 decodeParserDeadEnd : Parser.DeadEnd -> String
 decodeParserDeadEnd de =
     let
@@ -511,3 +490,4 @@ decodeParserDeadEnd de =
 
         BadRepeat ->
             "While processing this input, I began to recurse infinitely! :( Let my programmer know! It happened" ++ endInfo de.row de.col
+--}
