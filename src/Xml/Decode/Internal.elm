@@ -1,164 +1,293 @@
-module Xml.Decode.Internal exposing (SubTagDict, XmlContentValue(..), XmlValue, discardAttributeList, insertSubTag, mySpaces, parseXmlHelp, possibleComments, simpleContent, subTagContent, subTagContentHelp, xml, xmlFile, xmlTag)
+module Xml.Decode.Internal exposing
+    ( Attributes
+    , Children
+    , Content(..)
+    , Context(..)
+    , Element
+    , Problem(..)
+    , Tag
+    , XmlParser
+    , xml
+    )
 
 import Dict exposing (Dict)
-import Parser exposing ((|.), (|=), Parser, andThen, keyword, spaces, succeed, symbol)
+import Parser.Advanced as Parser exposing (..)
 import Set exposing (Set)
 
 
-type alias XmlValue =
-    ( String, XmlContentValue )
+type alias Tag =
+    ( String, Element )
 
 
-type XmlContentValue
-    = SubTags SubTagDict
-    | PresenceTag
-    | XmlString String
+type alias Element =
+    { content : Content
+    , attributes : Maybe Attributes
+    }
 
 
-type alias SubTagDict =
-    Dict String (List XmlContentValue)
+type alias Attributes =
+    Dict String String
 
 
-xmlFile : Parser XmlValue
-xmlFile =
-    succeed identity
-        |. Parser.symbol "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-        |. mySpaces
-        |. possibleComments
-        |. mySpaces
-        |= xml
-        |. mySpaces
-        |. Parser.end
+type Content
+    = Unstructured String
+    | NoContent
+    | Children Children
 
 
-possibleComments : Parser ()
-possibleComments =
-    symbol "<!--"
-        |. Parser.chompUntil "-->"
-        |. Parser.symbol "-->"
+type alias Children =
+    Dict String Element
 
 
-xml : Parser XmlValue
+type Context
+    = BeforeRoot
+    | BetweenTags
+    | Tag String
+    | EmptyTag String
+    | StringTag String
+    | BetweenAttributes
+    | Attribute String
+
+
+type Problem
+    = ExpectingCommentStart
+    | ExpectingCommentEnd
+    | ExpectingDirectiveStart
+    | ExpectingDirectiveEnd
+    | ExpectingEOF
+    | ExpectingQuotationMark Char
+    | ExpectingTagOpening
+    | ExpectingValidTagName
+    | ExpectingOnlyAttrTagEnd String
+    | ExpectingOpeningTagClose String
+    | ExpectingClosingTagOpening String
+    | ExpectingClosingTag String
+    | ExpectingClosingTagEnd String
+    | ExpectingValidAttrName
+    | ExpectingAttrEq
+    | ExpectingAttrValue
+
+
+type alias XmlParser a =
+    Parser Context Problem a
+
+
+xml : XmlParser Tag
 xml =
-    xmlTag
+    inContext BeforeRoot <|
+        Parser.succeed identity
+            |. ignoreCommentsAndDirectives
+            |= tag
+            |. ignoreCommentsAndDirectives
+            |. end ExpectingEOF
+
+
+tag : XmlParser Tag
+tag =
+    let
+        tagOpening : XmlParser ( String, Maybe Attributes )
+        tagOpening =
+            inContext BetweenTags <|
+                succeed Tuple.pair
+                    |. spaces
+                    |. symbol (Token "<" ExpectingTagOpening)
+                    |= variable
+                        { start = \c -> Char.isAlpha c || c == '_'
+                        , inner = \c -> Char.isAlphaNum c || Set.member c (Set.fromList [ '-', '_', '.', ':' ])
+                        , reserved = Set.singleton "xml"
+                        , expecting = ExpectingValidTagName
+                        }
+                    |= maybeAttributes
+
+        tagOpeningEndToken =
+            ">"
+    in
+    tagOpening
         |> andThen
-            (\tag ->
-                Parser.oneOf
-                    [ succeed ( tag, PresenceTag )
-                        |. symbol "/>"
-                    , succeed identity
-                        |. symbol ">"
-                        |= parseXmlHelp tag
-                    ]
+            (\( tagName, attrs ) ->
+                succeed (\content -> ( tagName, Element content attrs ))
+                    |. spaces
+                    |= (inContext (Tag tagName) <|
+                            oneOf
+                                [ emptyTagRemainder tagName
+                                , tagChildren tagName
+                                , stringTagRemainder tagName
+                                ]
+                       )
             )
 
 
-
-{--| Detect a valid xml tag opener followed by a valid xml tag name, then discard the xml attribute list.
-
-Does not consume the tag close, as that may help define whether the tag has any content.
-
-See XML Naming Rules on https://www.w3schools.com/xml/xml_elements.asp to help understand valid tag names.--}
+openingTagEnd : String -> XmlParser ()
+openingTagEnd tagName =
+    symbol <| Token ">" <| ExpectingOpeningTagClose tagName
 
 
-xmlTag : Parser String
-xmlTag =
-    succeed identity
-        |. symbol "<"
-        |= Parser.variable
-            { start = \c -> Char.isAlpha c || c == '_'
-            , inner = \c -> Char.isAlphaNum c || Set.member c (Set.fromList [ '-', '_', '.' ])
-            , reserved = Set.singleton "xml"
-            }
-        |. discardAttributeList
+closingTag : String -> XmlParser ()
+closingTag tagName =
+    let
+        closingTagOpening =
+            symbol <| Token "</" <| ExpectingClosingTagOpening tagName
 
+        closingTagName =
+            keyword <| Token tagName <| ExpectingClosingTag tagName
 
-parseXmlHelp : String -> Parser XmlValue
-parseXmlHelp tag =
-    Parser.oneOf
-        [ succeed ( tag, PresenceTag )
-            |. Parser.backtrackable mySpaces
-            |. symbol ("</" ++ tag ++ ">")
-        , succeed (\x -> ( tag, x ))
-            |. Parser.backtrackable mySpaces
-            |= subTagContent tag
-        , succeed (\x -> ( tag, x ))
-            |= simpleContent
-            |. symbol ("</" ++ tag ++ ">")
-        , Parser.problem
-            "This super simple XML library doesn't support semi-structured XML. Please decide between either child tags or text inside any particular tag, not both!"
-        ]
-
-
-simpleContent : Parser XmlContentValue
-simpleContent =
-    Parser.getChompedString (Parser.chompUntil "</")
-        |> Parser.map XmlString
-
-
-subTagContent : String -> Parser XmlContentValue
-subTagContent tag =
-    Parser.loop Dict.empty
-        (subTagContentHelp tag)
-
-
-subTagContentHelp : String -> SubTagDict -> Parser (Parser.Step SubTagDict XmlContentValue)
-subTagContentHelp tag dict =
-    Parser.oneOf
-        [ succeed (Parser.Loop dict)
-            |. possibleComments
-        , succeed (Parser.Done (SubTags dict))
-            |. symbol ("</" ++ tag ++ ">")
-        , succeed (\( t, x ) -> Parser.Loop (dict |> insertSubTag t x))
-            |= xml
-        ]
-        |. mySpaces
-
-
-insertSubTag : String -> XmlContentValue -> SubTagDict -> SubTagDict
-insertSubTag tag xmltag =
-    Dict.update tag
-        (\m ->
-            case m of
-                Just l ->
-                    Just (xmltag :: l)
-
-                Nothing ->
-                    Just (List.singleton xmltag)
-        )
-
-
-discardAttributeList : Parser ()
-discardAttributeList =
-    (Parser.loop () <|
-        always
-            (succeed identity
-                |. spaces
-                |= Parser.oneOf
-                    [ succeed (Parser.Loop ())
-                        |. Parser.variable
-                            { start = Char.isAlpha
-                            , inner = \c -> Char.isAlphaNum c || c == ':'
-                            , reserved = Set.empty
-                            }
-                        |. Parser.oneOf
-                            [ symbol "=\""
-                                |. Parser.chompUntil "\""
-                                |. symbol "\""
-                            , symbol "='"
-                                |. Parser.chompUntil "'"
-                                |. symbol "'"
-                            ]
-                    , succeed (Parser.Done ())
-                    ]
-            )
-    )
+        closingTagEnd =
+            symbol <| Token ">" <| ExpectingClosingTagEnd tagName
+    in
+    closingTagOpening
         |. spaces
+        |. closingTagName
+        |. spaces
+        |. closingTagEnd
 
 
-mySpaces : Parser ()
-mySpaces =
-    Parser.chompWhile
-        (\c ->
-            Set.member c <| Set.fromList [ ' ', '\n', '\u{000D}', '\t' ]
+emptyTagRemainder : String -> XmlParser Content
+emptyTagRemainder tagName =
+    let
+        attributeOnlyTagEnd =
+            symbol <| Token "/>" <| ExpectingOnlyAttrTagEnd tagName
+    in
+    inContext (EmptyTag tagName) <|
+        map (\() -> NoContent) <|
+            oneOf
+                [ attributeOnlyTagEnd
+                , openingTagEnd tagName
+                    |. spaces
+                    |. closingTag tagName
+                ]
+
+
+tagChildren : String -> XmlParser Content
+tagChildren tagName =
+    succeed (Children << Dict.fromList)
+        |. openingTagEnd tagName
+        |. spaces
+        |= loop []
+            (\listSoFar ->
+                oneOf
+                    [ map (\newTag -> Loop (newTag :: listSoFar)) tag
+                    , map (\() -> Done listSoFar) (closingTag tagName)
+                    ]
+            )
+
+
+stringTagRemainder : String -> XmlParser Content
+stringTagRemainder tagName =
+    inContext (StringTag tagName) <|
+        map Unstructured <|
+            getChompedString <|
+                loop ()
+                    (\() ->
+                        let
+                            closingTagName =
+                                keyword <| Token tagName <| ExpectingClosingTag tagName
+
+                            closingTagEnd =
+                                symbol <| Token ">" <| ExpectingClosingTagEnd tagName
+                        in
+                        oneOf
+                            [ map Loop <|
+                                chompUntil (Token "</" (ExpectingClosingTagOpening tagName))
+                                    |. symbol (Token "</" (ExpectingClosingTagOpening tagName))
+                            , map Done
+                                (closingTagName
+                                    |. closingTagEnd
+                                )
+                            ]
+                    )
+
+
+maybeAttributes : XmlParser (Maybe Attributes)
+maybeAttributes =
+    succeed identity
+        |. spaces
+        |= oneOf
+            [ map (Dict.fromList >> Just)
+                (attribute
+                    |> andThen
+                        (\first ->
+                            succeed ((::) first)
+                                |= attributeList
+                        )
+                )
+            , succeed Nothing
+            ]
+
+
+attributeList : XmlParser (List ( String, String ))
+attributeList =
+    loop []
+        (\listSoFar ->
+            oneOf
+                [ map (\newAttr -> Loop (newAttr :: listSoFar))
+                    attribute
+                , succeed (Done listSoFar)
+                ]
         )
+
+
+attribute : XmlParser ( String, String )
+attribute =
+    let
+        attributeName =
+            variable
+                { start = \c -> Char.isAlpha c || c == '_'
+                , inner = \c -> Char.isAlphaNum c || Set.member c (Set.fromList [ '-', '_', '.', ':' ])
+                , reserved = Set.singleton "xml"
+                , expecting = ExpectingValidAttrName
+                }
+    in
+    attributeName
+        |> andThen
+            (\attrName ->
+                inContext (Attribute attrName) <|
+                    succeed (Tuple.pair attrName)
+                        |. spaces
+                        |. symbol (Token "=" ExpectingAttrEq)
+                        |. spaces
+                        |= oneOf
+                            [ quotedString '"' --" --Ignore this comment; VSCode code rendering bug fix.
+                            , quotedString '\''
+                            ]
+            )
+
+
+quotedString : Char -> XmlParser String
+quotedString quote =
+    let
+        quoteToken =
+            Token (String.fromChar quote) (ExpectingQuotationMark quote)
+    in
+    succeed identity
+        |. symbol quoteToken
+        |= getChompedString (chompUntil quoteToken)
+        |. symbol quoteToken
+
+
+ignoreCommentsAndDirectives : XmlParser ()
+ignoreCommentsAndDirectives =
+    let
+        commentStart =
+            Token "<!--" <| ExpectingCommentStart
+
+        commentEnd =
+            Token "-->" <| ExpectingCommentEnd
+
+        directiveStart =
+            Token "<?" <| ExpectingDirectiveStart
+
+        directiveEnd =
+            Token "?>" <| ExpectingDirectiveEnd
+    in
+    Parser.succeed ()
+        |. spaces
+        |. loop ()
+            (\() ->
+                oneOf
+                    [ map (\_ -> Loop ()) <|
+                        multiComment commentStart commentStart NotNestable
+                    , map (\_ -> Loop ()) <|
+                        multiComment directiveStart directiveEnd NotNestable
+                    , succeed (Done ())
+                    ]
+            )
