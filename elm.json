@@ -1,25 +1,17 @@
 {
-    "type": "application",
-    "source-directories": [
-        "src",
-        "src/Xml",
-        "src/Xml/Decode"
+    "type": "package",
+    "name": "4onen/structured-xml",
+    "summary": "Encode and decode structured XML patterns",
+    "license": "MIT",
+    "version": "1.0.0",
+    "exposed-modules": [
+        "Xml.Decode",
+        "Xml.Encode"
     ],
-    "elm-version": "0.19.0",
+    "elm-version": "0.19.0 <= v < 0.20.0",
     "dependencies": {
-        "direct": {
-            "elm/core": "1.0.0",
-            "elm/json": "1.0.0",
-            "elm/parser": "1.1.0",
-            "elm-explorations/test": "1.0.0"
-        },
-        "indirect": {
-            "elm/random": "1.0.0",
-            "elm/time": "1.0.0"
-        }
+        "elm/core": "1.0.0 <= v < 2.0.0",
+        "elm/parser": "1.1.0 <= v < 2.0.0"
     },
-    "test-dependencies": {
-        "direct": {},
-        "indirect": {}
-    }
+    "test-dependencies": {}
 }
