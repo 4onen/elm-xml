@@ -1,4 +1,4 @@
-module Encode exposing
+module Xml.Encode exposing
     ( children
     , encode
     , float
