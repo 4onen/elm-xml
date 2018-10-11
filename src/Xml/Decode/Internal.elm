@@ -37,7 +37,7 @@ type Content
 
 
 type alias Children =
-    Dict String Element
+    Dict String (List Element)
 
 
 type Context
@@ -163,16 +163,31 @@ emptyTagRemainder tagName =
 
 tagChildren : String -> XmlParser Content
 tagChildren tagName =
-    succeed (Children << Dict.fromList)
+    succeed Children
         |. openingTagEnd tagName
         |. spaces
-        |= loop []
-            (\listSoFar ->
+        |= loop Dict.empty
+            (\childrenSoFar ->
                 oneOf
-                    [ map (\newTag -> Loop (newTag :: listSoFar)) tag
-                    , map (\() -> Done listSoFar) (closingTag tagName)
+                    [ tag
+                        |> map (Loop << tagChild childrenSoFar)
+                    , succeed (Done childrenSoFar)
+                        |. closingTag tagName
                     ]
             )
+
+
+tagChild : Children -> Tag -> Children
+tagChild childrenSoFar newTag =
+    Dict.update
+        (Tuple.first newTag)
+        (\childList ->
+            childList
+                |> Maybe.withDefault []
+                |> (::) (Tuple.second newTag)
+                |> Just
+        )
+        childrenSoFar
 
 
 stringTagRemainder : String -> XmlParser Content
