@@ -5,7 +5,9 @@ module Xml.Decode exposing
     , errorToString
     , fail
     , float
+    , floatAttribute
     , int
+    , intAttribute
     , list
     , map
     , map2
@@ -18,6 +20,7 @@ module Xml.Decode exposing
     , oneOf
     , presenceTag
     , string
+    , stringAttribute
     , succeed
     , tag
     , tagPresence
@@ -276,35 +279,68 @@ string =
 int : Decoder Int
 int =
     expectingStringContent "an integer"
-        >> Result.andThen
-            (\s ->
-                if String.length s < 100 then
-                    String.toInt s
-                        |> Result.fromMaybe
-                            (BadValue <| "You were expecting an integer, but only found this string! \n\"" ++ s ++ "\"")
-
-                else
-                    String.toInt s
-                        |> Result.fromMaybe
-                            (BadValue "You were expecting an integer, but only found a really long string!")
-            )
+        >> Result.andThen parseInt
 
 
 float : Decoder Float
 float =
     expectingStringContent "a floating-point number"
         >> Result.andThen
-            (\s ->
-                if String.length s < 100 then
-                    String.toFloat s
-                        |> Result.fromMaybe
-                            (BadValue <| "You were expecting a floating-point number, but only found this string! \n\"" ++ s ++ "\"")
+            parseFloat
 
-                else
-                    String.toFloat s
-                        |> Result.fromMaybe
-                            (BadValue "You were expecting a floating-point number, but only found a really long string!")
-            )
+
+stringAttribute : String -> Decoder String
+stringAttribute attrName ( _, { content, attributes } ) =
+    attributes
+        |> Maybe.withDefault Dict.empty
+        |> Dict.get attrName
+        |> Result.fromMaybe (BadValue "You were looking for a string attribute, but couldn't find it on this tag!")
+
+
+intAttribute : String -> Decoder Int
+intAttribute attrName thisTag =
+    case stringAttribute attrName thisTag of
+        Result.Ok str ->
+            parseInt str
+
+        Result.Err _ ->
+            Result.Err <| BadValue "You were looking for an integer attribute, but couldn't find it on this tag!"
+
+
+floatAttribute : String -> Decoder Float
+floatAttribute attrName thisTag =
+    case stringAttribute attrName thisTag of
+        Result.Ok str ->
+            parseFloat str
+
+        Result.Err _ ->
+            Result.Err <| BadValue "You were looking for a floating-point number, but couldn't find it on this tag!"
+
+
+parseInt : String -> Result ParseError Int
+parseInt s =
+    if String.length s < 100 then
+        String.toInt s
+            |> Result.fromMaybe
+                (BadValue <| "You were expecting an integer, but only found this string! \n\"" ++ s ++ "\"")
+
+    else
+        String.toInt s
+            |> Result.fromMaybe
+                (BadValue "You were expecting an integer, but only found a really long string!")
+
+
+parseFloat : String -> Result ParseError Float
+parseFloat s =
+    if String.length s < 100 then
+        String.toFloat s
+            |> Result.fromMaybe
+                (BadValue <| "You were expecting a floating-point number, but only found this string! \n\"" ++ s ++ "\"")
+
+    else
+        String.toFloat s
+            |> Result.fromMaybe
+                (BadValue "You were expecting a floating-point number, but only found a really long string!")
 
 
 expectingStringContent : String -> Decoder String
