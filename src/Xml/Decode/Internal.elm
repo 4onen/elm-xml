@@ -46,6 +46,7 @@ type Context
     | Tag String
     | EmptyTag String
     | StringTag String
+    | TagClose String
     | BetweenAttributes
     | Attribute String
 
@@ -93,8 +94,8 @@ tag =
         tagOpening =
             inContext BetweenTags <|
                 succeed Tuple.pair
-                    |. spaces
-                    |. symbol (Token "<" ExpectingTagOpening)
+                    |. backtrackable spaces
+                    |. backtrackable (symbol (Token "<" ExpectingTagOpening))
                     |= variable
                         { start = \c -> Char.isAlpha c || c == '_'
                         , inner = \c -> Char.isAlphaNum c || Set.member c (Set.fromList [ '-', '_', '.', ':' ])
@@ -102,9 +103,6 @@ tag =
                         , expecting = ExpectingValidTagName
                         }
                     |= maybeAttributes
-
-        tagOpeningEndToken =
-            ">"
     in
     tagOpening
         |> andThen
@@ -138,34 +136,38 @@ closingTag tagName =
         closingTagEnd =
             symbol <| Token ">" <| ExpectingClosingTagEnd tagName
     in
-    closingTagOpening
-        |. spaces
-        |. closingTagName
-        |. spaces
-        |. closingTagEnd
+    inContext (TagClose tagName) <|
+        closingTagOpening
+            |. spaces
+            |. closingTagName
+            |. spaces
+            |. closingTagEnd
 
 
 emptyTagRemainder : String -> XmlParser Content
 emptyTagRemainder tagName =
     let
         attributeOnlyTagEnd =
-            symbol <| Token "/>" <| ExpectingOnlyAttrTagEnd tagName
+            symbol <|
+                Token "/>" <|
+                    ExpectingOnlyAttrTagEnd tagName
     in
-    inContext (EmptyTag tagName) <|
-        map (\() -> NoContent) <|
-            oneOf
-                [ attributeOnlyTagEnd
-                , openingTagEnd tagName
-                    |. spaces
-                    |. closingTag tagName
-                ]
+    backtrackable <|
+        inContext (EmptyTag tagName) <|
+            map (\() -> NoContent) <|
+                oneOf
+                    [ attributeOnlyTagEnd
+                    , openingTagEnd tagName
+                        |. spaces
+                        |. closingTag tagName
+                    ]
 
 
 tagChildren : String -> XmlParser Content
 tagChildren tagName =
     succeed Children
-        |. openingTagEnd tagName
-        |. spaces
+        |. backtrackable (openingTagEnd tagName)
+        |. backtrackable spaces
         |= loop Dict.empty
             (\childrenSoFar ->
                 oneOf
@@ -192,28 +194,30 @@ tagChild childrenSoFar newTag =
 
 stringTagRemainder : String -> XmlParser Content
 stringTagRemainder tagName =
-    inContext (StringTag tagName) <|
-        map Unstructured <|
-            getChompedString <|
-                loop ()
-                    (\() ->
-                        let
-                            closingTagName =
-                                keyword <| Token tagName <| ExpectingClosingTag tagName
+    let
+        closingTagOpenToken =
+            Token "</" (ExpectingClosingTagOpening tagName)
 
-                            closingTagEnd =
-                                symbol <| Token ">" <| ExpectingClosingTagEnd tagName
-                        in
-                        oneOf
-                            [ map Loop <|
-                                chompUntil (Token "</" (ExpectingClosingTagOpening tagName))
-                                    |. symbol (Token "</" (ExpectingClosingTagOpening tagName))
-                            , map Done
-                                (closingTagName
-                                    |. closingTagEnd
-                                )
-                            ]
-                    )
+        closingTagName =
+            keyword <| Token tagName <| ExpectingClosingTag tagName
+
+        closingTagEnd =
+            symbol <| Token ">" <| ExpectingClosingTagEnd tagName
+    in
+    inContext (StringTag tagName) <|
+        succeed Unstructured
+            |. openingTagEnd tagName
+            |= loop ""
+                (\strSoFar ->
+                    oneOf
+                        [ succeed (Done strSoFar)
+                            |. closingTag tagName
+                        , succeed (Loop << (++) strSoFar)
+                            |= getChompedString (chompUntil closingTagOpenToken)
+                        , succeed (Loop << (++) strSoFar)
+                            |= getChompedString (symbol closingTagOpenToken)
+                        ]
+                )
 
 
 maybeAttributes : XmlParser (Maybe Attributes)
@@ -265,7 +269,7 @@ attribute =
                         |. symbol (Token "=" (ExpectingAttrEq attrName))
                         |. spaces
                         |= oneOf
-                            [ quotedString '"' --" --Ignore this comment; VSCode code rendering bug fix.
+                            [ quotedString '"' --"--Ignore this; VSCode code rendering fix.
                             , quotedString '\''
                             ]
             )

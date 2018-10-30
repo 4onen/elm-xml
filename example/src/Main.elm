@@ -19,44 +19,57 @@ main =
         }
 
 
-init =
-    Nothing
+type alias ParseResult =
+    Result (List XDI.DeadEnd) XDI.Tag
 
 
-type alias Model =
-    Maybe (Result (List String) XDI.Tag)
+type Model
+    = NoParse
+    | ParseDat String ParseResult
 
 
 type Msg
-    = ParseGoodData
-    | ParseBadData
+    = GoParse String
+
+
+init =
+    NoParse
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
-        ParseGoodData ->
-            goodData
+        GoParse data ->
+            data
                 |> Parser.Advanced.run XDI.xml
-                |> Result.mapError (List.map XDEP.deadEndToString)
-                |> Just
-
-        ParseBadData ->
-            badData
-                |> Parser.Advanced.run XDI.xml
-                |> Result.mapError (List.map XDEP.deadEndToString)
-                |> Just
+                |> ParseDat data
 
 
+view : Model -> Html.Html Msg
 view model =
+    let
+        renderBlock =
+            case model of
+                NoParse ->
+                    Html.text "No parse yet."
+
+                ParseDat dat result ->
+                    Html.div []
+                        [ sometext <| Debug.toString result
+                        , sometext <| Debug.toString <| Result.mapError (List.map XDEP.deadEndToString) result
+                        , sometext <| Debug.toString dat
+                        ]
+
+        buttonBlock =
+            Html.div []
+                [ viewButton "ParseGood" (GoParse goodData)
+                , viewButton "ParseBad" (GoParse badData)
+                , viewButton "ParseThree" (GoParse threeData)
+                ]
+    in
     Html.div []
-        [ Html.div []
-            [ viewButton "ParseGoodData" ParseGoodData
-            , viewButton "ParseBadData" ParseBadData
-            ]
-        , Html.div []
-            [ Html.text <| Debug.toString model
-            ]
+        [ buttonBlock
+        , renderBlock
         ]
 
 
@@ -67,6 +80,14 @@ viewButton name msg =
         , Html.onClick msg
         ]
         []
+
+
+sometext : String -> Html.Html Msg
+sometext text =
+    text
+        |> String.split "\\n"
+        |> List.map (\s -> Html.p [] [ Html.text s ])
+        |> Html.div []
 
 
 goodData =
@@ -109,3 +130,7 @@ badData =
         </ul>
     </tag>
 """
+
+
+threeData =
+    "<myroot><sub></sub><sub></sub><str>s</str></myroot>"
